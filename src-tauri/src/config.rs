@@ -88,7 +88,7 @@ impl Default for AppConfig {
                 provider: ModelProvider::Ollama,
                 ollama: OllamaEmbeddingConfig {
                     base_url: "http://localhost:11434".to_string(),
-                    model: "nomic-embed-text".to_string(),
+                    model: "bge-m3".to_string(),
                 },
                 openai: OpenAiEmbeddingConfig {
                     base_url: "https://api.openai.com/v1".to_string(),

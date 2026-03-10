@@ -1,6 +1,8 @@
+mod chunker;
 mod parser;
 mod retriever;
 
+pub use chunker::{Chunker, chunk_document};
 pub use parser::{DocumentParser, DocumentType, ParsedDocument};
 pub use retriever::Retriever;
 
@@ -15,8 +17,25 @@ pub struct Document {
     pub file_path: String,
     pub file_type: String,
     pub file_size: u64,
+    pub status: DocumentStatus,
+    pub chunk_count: usize,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DocumentStatus {
+    Pending,
+    Processing,
+    Ready,
+    Failed,
+}
+
+impl Default for DocumentStatus {
+    fn default() -> Self {
+        Self::Pending
+    }
 }
 
 impl Document {
@@ -28,6 +47,8 @@ impl Document {
             file_path,
             file_type,
             file_size,
+            status: DocumentStatus::Pending,
+            chunk_count: 0,
             created_at: now,
             updated_at: now,
         }
@@ -40,6 +61,7 @@ pub struct DocumentChunk {
     pub document_id: String,
     pub chunk_index: usize,
     pub content: String,
+    pub embedding: Option<Vec<f32>>,
     pub created_at: i64,
 }
 
@@ -50,7 +72,13 @@ impl DocumentChunk {
             document_id,
             chunk_index,
             content,
+            embedding: None,
             created_at: Utc::now().timestamp(),
         }
+    }
+    
+    pub fn with_embedding(mut self, embedding: Vec<f32>) -> Self {
+        self.embedding = Some(embedding);
+        self
     }
 }

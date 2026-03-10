@@ -4,9 +4,13 @@ export interface Document {
   filePath: string
   fileType: string
   fileSize: number
+  status: DocumentStatus
+  chunkCount: number
   createdAt: number
   updatedAt: number
 }
+
+export type DocumentStatus = 'pending' | 'processing' | 'ready' | 'failed'
 
 export interface DocumentChunk {
   id: string

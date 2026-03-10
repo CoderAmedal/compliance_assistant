@@ -46,6 +46,8 @@ async fn run_migrations(pool: &DatabasePool) -> crate::AppResult<()> {
             file_path TEXT NOT NULL UNIQUE,
             file_type TEXT NOT NULL,
             file_size INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            chunk_count INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         );
@@ -55,6 +57,7 @@ async fn run_migrations(pool: &DatabasePool) -> crate::AppResult<()> {
             document_id TEXT NOT NULL,
             chunk_index INTEGER NOT NULL,
             content TEXT NOT NULL,
+            embedding TEXT,
             created_at INTEGER NOT NULL,
             FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
@@ -73,6 +76,7 @@ async fn run_migrations(pool: &DatabasePool) -> crate::AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
         CREATE INDEX IF NOT EXISTS idx_vectors_document_id ON vectors(document_id);
+        CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
         "#,
     )
     .execute(pool)

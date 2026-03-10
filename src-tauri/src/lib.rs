@@ -10,10 +10,10 @@ mod storage;
 pub use error::{AppError, AppResult};
 pub use config::{AppConfig, ModelProvider};
 pub use chat::{ChatSession, ChatMessage, MessageRole};
-pub use knowledge::{Document, DocumentChunk};
+pub use knowledge::{Document, DocumentChunk, DocumentStatus};
 pub use tools::{ToolRegistry, ToolExecutor, PermissionManager};
 pub use skills::{Skill, SkillLoader, SkillRunner};
-pub use llm::{LlmClient, OllamaClient, OpenAIClient};
+pub use llm::{LlmClient, OllamaClient, OpenAIClient, EmbeddingService};
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -107,6 +107,9 @@ pub struct DocumentResponse {
     pub file_type: String,
     #[serde(rename = "fileSize")]
     pub file_size: u64,
+    pub status: String,
+    #[serde(rename = "chunkCount")]
+    pub chunk_count: usize,
     #[serde(rename = "createdAt")]
     pub created_at: i64,
     #[serde(rename = "updatedAt")]
@@ -121,6 +124,13 @@ impl From<Document> for DocumentResponse {
             file_path: doc.file_path,
             file_type: doc.file_type,
             file_size: doc.file_size,
+            status: match doc.status {
+                DocumentStatus::Pending => "pending".to_string(),
+                DocumentStatus::Processing => "processing".to_string(),
+                DocumentStatus::Ready => "ready".to_string(),
+                DocumentStatus::Failed => "failed".to_string(),
+            },
+            chunk_count: doc.chunk_count,
             created_at: doc.created_at,
             updated_at: doc.updated_at,
         }

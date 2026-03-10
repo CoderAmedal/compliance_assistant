@@ -43,7 +43,7 @@
                   <a-avatar v-else :size="32" style="background-color: #1890ff">AI</a-avatar>
                 </div>
                 <div class="message-content">
-                  <div class="message-role">{{ message.role === 'user' ? '用户' : 'AI助手' }}</div>
+                  <div class="message-role">{{ message.role === 'user' ? '用户' : '智能隐私合规专家' }}</div>
                   <div class="message-text">{{ message.content }}</div>
                 </div>
               </div>

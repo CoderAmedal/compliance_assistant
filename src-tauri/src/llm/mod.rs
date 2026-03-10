@@ -1,6 +1,8 @@
+mod embedding;
 mod ollama;
 mod openai;
 
+pub use embedding::EmbeddingService;
 pub use ollama::OllamaClient;
 pub use openai::OpenAIClient;
 

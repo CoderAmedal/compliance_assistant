@@ -13,6 +13,7 @@ async fn main() {
     
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(state)
 .invoke_handler(tauri::generate_handler![
             commands::get_sessions,
@@ -23,7 +24,10 @@ async fn main() {
             commands::send_message,
             commands::list_documents,
             commands::add_document,
+            commands::get_document,
+            commands::process_document,
             commands::delete_document,
+            commands::get_document_chunks,
             commands::search_knowledge,
             commands::list_tools,
             commands::execute_tool,

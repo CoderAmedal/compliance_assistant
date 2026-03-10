@@ -7,8 +7,10 @@ use compliance_assistant::{
     MessageRole,
     Document,
     DocumentChunk,
+    DocumentStatus,
     ModelProvider,
     LlmClient,
+    EmbeddingService,
 };
 
 use tauri::State;
@@ -154,12 +156,50 @@ pub async fn send_message(
         .await
         .map_err(|e| e.to_string())?;
     
+    let mut llm_messages: Vec<compliance_assistant::llm::ChatMessage> = vec![];
+    
+    // 检索知识库相关内容
+    let config = state.config.read().await;
+    let embedding_service = EmbeddingService::new(config.embedding_model.clone());
+    let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone())
+        .with_embedding(embedding_service);
+    
+    let knowledge_chunks = match retriever.search(&content, 5).await {
+        Ok(chunks) => {
+            eprintln!("[DEBUG] Found {} knowledge chunks for query: {}", chunks.len(), content);
+            chunks
+        },
+        Err(e) => {
+            eprintln!("[ERROR] Failed to search knowledge: {}", e);
+            vec![]
+        }
+    };
+    
+    if !knowledge_chunks.is_empty() {
+        let knowledge_context: String = knowledge_chunks
+            .iter()
+            .map(|c| format!("- {}", c.content))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        
+        eprintln!("[DEBUG] Knowledge context length: {} chars", knowledge_context.len());
+        
+        let system_prompt = format!(
+            "你是一个智能助手，可以参考以下知识库内容来回答用户问题。如果知识库内容与问题相关，请优先基于知识库内容回答；如果不相关或知识库中没有相关信息，请基于你的知识回答。\n\n知识库内容：\n{}\n\n请根据上述知识库内容回答用户的问题。",
+            knowledge_context
+        );
+        
+        llm_messages.push(compliance_assistant::llm::ChatMessage::system(system_prompt));
+    } else {
+        eprintln!("[DEBUG] No knowledge chunks found");
+    }
+    
     let messages = session_manager
         .get_messages(&session_id)
         .await
         .map_err(|e| e.to_string())?;
     
-    let llm_messages: Vec<compliance_assistant::llm::ChatMessage> = messages
+    let chat_messages: Vec<compliance_assistant::llm::ChatMessage> = messages
         .iter()
         .map(|m| match m.role {
             MessageRole::User => compliance_assistant::llm::ChatMessage::user(m.content.clone()),
@@ -168,7 +208,8 @@ pub async fn send_message(
         })
         .collect();
     
-    let config = state.config.read().await;
+    llm_messages.extend(chat_messages);
+    
     let response = match &config.chat_model.provider {
         ModelProvider::Ollama => {
             let client = compliance_assistant::OllamaClient::new(
@@ -232,9 +273,6 @@ pub async fn add_document(
 ) -> Result<DocumentResponse, String> {
     let path = std::path::Path::new(&file_path);
     
-    let parsed = compliance_assistant::knowledge::DocumentParser::parse(path)
-        .map_err(|e| e.to_string())?;
-    
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -253,20 +291,83 @@ pub async fn add_document(
     
     let document = Document::new(file_name, file_path, file_type, file_size);
     
-    let chunks: Vec<DocumentChunk> = parsed
-        .content
-        .split("\n\n")
-        .enumerate()
-        .map(|(i, chunk)| DocumentChunk::new(document.id.clone(), i, chunk.to_string()))
-        .collect();
-    
     let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone());
     retriever
-        .add_document(document.clone(), chunks)
+        .add_document(&document)
         .await
         .map_err(|e| e.to_string())?;
     
     Ok(DocumentResponse::from(document))
+}
+
+#[tauri::command]
+pub async fn process_document(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentResponse, String> {
+    let config = state.config.read().await;
+    let embedding_service = EmbeddingService::new(config.embedding_model.clone());
+    drop(config);
+    
+    let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone())
+        .with_embedding(embedding_service);
+    
+    let document = retriever
+        .get_document(&id)
+        .await
+        .map_err(|e| format!("Failed to get document: {}", e))?
+        .ok_or_else(|| "Document not found".to_string())?;
+    
+    retriever
+        .process_document(&document)
+        .await
+        .map_err(|e| format!("Failed to process document '{}': {}", document.file_path, e))?;
+    
+    let updated = retriever
+        .get_document(&id)
+        .await
+        .map_err(|e| format!("Failed to get updated document: {}", e))?
+        .ok_or_else(|| "Document not found".to_string())?;
+    
+    Ok(DocumentResponse::from(updated))
+}
+
+#[tauri::command]
+pub async fn get_document(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentResponse, String> {
+    let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone());
+    retriever
+        .get_document(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .map(DocumentResponse::from)
+        .ok_or_else(|| "Document not found".to_string())
+}
+
+#[tauri::command]
+pub async fn get_document_chunks(
+    document_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone());
+    retriever
+        .get_chunks(&document_id)
+        .await
+        .map(|chunks| {
+            chunks
+                .into_iter()
+                .map(|c| serde_json::json!({
+                    "id": c.id,
+                    "documentId": c.document_id,
+                    "chunkIndex": c.chunk_index,
+                    "content": c.content,
+                    "createdAt": c.created_at
+                }))
+                .collect()
+        })
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -287,7 +388,10 @@ pub async fn search_knowledge(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone());
+    let config = state.config.read().await;
+    let embedding_service = EmbeddingService::new(config.embedding_model.clone());
+    let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone())
+        .with_embedding(embedding_service);
     retriever
         .search(&query, limit.unwrap_or(5))
         .await

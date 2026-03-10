@@ -1,4 +1,5 @@
 use crate::{AppError, AppResult};
+use calamine::Reader;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,36 +114,14 @@ impl DocumentParser {
     }
 
     fn parse_pdf(path: &Path) -> AppResult<ParsedDocument> {
-        let pdf = lopdf::Document::load(path)
+        let content_bytes = std::fs::read(path)?;
+
+        let content = pdf_extract::extract_text_from_mem(&content_bytes)
             .map_err(|e| AppError::DocumentParse(format!("PDF parse error: {}", e)))?;
 
-        let mut content = String::new();
+        let pdf = lopdf::Document::load_mem(&content_bytes)
+            .map_err(|e| AppError::DocumentParse(format!("PDF load error: {}", e)))?;
         let page_count = pdf.get_pages().len();
-
-        for (_, page_id) in pdf.get_pages() {
-            if let Ok(page) = pdf.get_object(page_id) {
-                if let Ok(page_dict) = page.as_dict() {
-                    if let Ok(contents) = page_dict.get(b"Contents") {
-                        if let Ok(content_stream) = contents.as_array() {
-                            for obj in content_stream {
-                                if let lopdf::Object::Reference(obj_id) = obj {
-                                    if let Ok(stream) = pdf.get_object(*obj_id) {
-                                        if let Ok(stream_dict) = stream.as_stream() {
-                                            if let Ok(decoded) = stream_dict.decompressed_content()
-                                            {
-                                                let text = String::from_utf8_lossy(&decoded);
-                                                content.push_str(&text);
-                                                content.push('\n');
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         Ok(ParsedDocument {
             content,
@@ -155,10 +134,61 @@ impl DocumentParser {
     }
 
     fn parse_word(path: &Path) -> AppResult<ParsedDocument> {
-        let _content = std::fs::read(path)?;
+        let content_bytes = std::fs::read(path)?;
+
+        let docx = docx_rs::read_docx(&content_bytes)
+            .map_err(|e| AppError::DocumentParse(format!("Word parse error: {}", e)))?;
+
+        let mut content = String::new();
+        for child in docx.document.children.iter() {
+            match child {
+                docx_rs::DocumentChild::Paragraph(para) => {
+                    for p_child in para.children.iter() {
+                        if let docx_rs::ParagraphChild::Run(run) = p_child {
+                            for r_child in run.children.iter() {
+                                if let docx_rs::RunChild::Text(text) = r_child {
+                                    content.push_str(&text.text);
+                                }
+                            }
+                        }
+                    }
+                    content.push('\n');
+                }
+                docx_rs::DocumentChild::Table(table) => {
+                    for table_child in table.rows.iter() {
+                        if let docx_rs::TableChild::TableRow(row) = table_child {
+                            for row_child in row.cells.iter() {
+                                if let docx_rs::TableRowChild::TableCell(cell) = row_child {
+                                    for cell_child in cell.children.iter() {
+                                        if let docx_rs::TableCellContent::Paragraph(para) =
+                                            cell_child
+                                        {
+                                            for p_child in para.children.iter() {
+                                                if let docx_rs::ParagraphChild::Run(run) = p_child {
+                                                    for r_child in run.children.iter() {
+                                                        if let docx_rs::RunChild::Text(text) =
+                                                            r_child
+                                                        {
+                                                            content.push_str(&text.text);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    content.push('\t');
+                                }
+                            }
+                            content.push('\n');
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
 
         Ok(ParsedDocument {
-            content: String::new(),
+            content,
             metadata: DocumentMetadata {
                 title: path.file_name().and_then(|n| n.to_str()).map(String::from),
                 ..Default::default()
@@ -167,10 +197,40 @@ impl DocumentParser {
     }
 
     fn parse_excel(path: &Path) -> AppResult<ParsedDocument> {
-        let _content = std::fs::read(path)?;
+        let mut workbook = calamine::open_workbook_auto(path)
+            .map_err(|e| AppError::DocumentParse(format!("Excel parse error: {}", e)))?;
+
+        let mut content = String::new();
+        let sheets = workbook.sheet_names().to_vec();
+
+        for sheet_name in sheets {
+            content.push_str(&format!("# {}\n\n", sheet_name));
+
+            if let Some(range_result) = workbook.worksheet_range(&sheet_name) {
+                let range = range_result
+                    .map_err(|e| AppError::DocumentParse(format!("Excel sheet error: {}", e)))?;
+
+                for row in range.rows() {
+                    for cell in row.iter() {
+                        let cell_text = match cell {
+                            calamine::DataType::Int(i) => i.to_string(),
+                            calamine::DataType::Float(f) => f.to_string(),
+                            calamine::DataType::String(s) => s.clone(),
+                            calamine::DataType::Bool(b) => b.to_string(),
+                            calamine::DataType::DateTime(dt) => dt.to_string(),
+                            _ => String::new(),
+                        };
+                        content.push_str(&cell_text);
+                        content.push('\t');
+                    }
+                    content.push('\n');
+                }
+            }
+            content.push('\n');
+        }
 
         Ok(ParsedDocument {
-            content: String::new(),
+            content,
             metadata: DocumentMetadata {
                 title: path.file_name().and_then(|n| n.to_str()).map(String::from),
                 ..Default::default()
