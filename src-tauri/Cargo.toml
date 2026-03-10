@@ -1,0 +1,39 @@
+[package]
+name = "compliance-assistant"
+version = "0.1.0"
+edition = "2021"
+description = "Offline AI Chat Assistant with Knowledge Base"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-shell = "2.0"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+lopdf = "0.32"
+docx-rs = "0.4"
+calamine = "0.22"
+pulldown-cmark = "0.9"
+scraper = "0.18"
+futures-util = "0.3"
+async-trait = "0.1"
+thiserror = "1.0"
+dirs = "5.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -1,0 +1,12 @@
+{
+  "name": "document_qa",
+  "description": "Answer questions about documents in knowledge base",
+  "tools": ["search_knowledge"],
+  "prompt": "You are a document Q&A assistant. Use the knowledge base to answer the user's question: {query}\n\nPlease provide a detailed answer based on the relevant documents.",
+  "parameters": {
+    "query": {
+      "type": "string",
+      "description": "The user's question about documents"
+    }
+  }
+}
