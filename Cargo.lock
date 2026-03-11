@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "compliance_assistant"
+name = "隐私评估智能咨询助手"
 version = "0.1.0"

@@ -3,8 +3,8 @@
     <a-layout style="min-height: 100vh">
       <a-layout-sider v-model:collapsed="collapsed" collapsible>
         <div class="logo">
-          <h2 v-if="!collapsed">AI 助手</h2>
-          <span v-else>AI</span>
+          <safety-outlined class="logo-icon" />
+          <span v-if="!collapsed" class="logo-text">隐私合规咨询助手</span>
         </div>
         <a-menu v-model:selectedKeys="selectedKeys" theme="dark" mode="inline">
           <a-menu-item key="chat">
@@ -50,6 +50,7 @@ import {
   BookOutlined,
   ToolOutlined,
   SettingOutlined,
+  SafetyOutlined,
 } from '@ant-design/icons-vue'
 
 const router = useRouter()
@@ -84,6 +85,16 @@ watch(selectedKeys, (keys) => {
   justify-content: center;
   color: #fff;
   font-weight: bold;
+  gap: 8px;
+}
+
+.logo-icon {
+  font-size: 20px;
+}
+
+.logo-text {
+  font-size: 14px;
+  white-space: nowrap;
 }
 
 .header {

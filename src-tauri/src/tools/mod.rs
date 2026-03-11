@@ -1,10 +1,12 @@
 pub mod registry;
 pub mod executor;
 pub mod permission;
+pub mod builtin;
 
 pub use registry::ToolRegistry;
 pub use executor::ToolExecutor;
 pub use permission::PermissionManager;
+pub use builtin::{FileReadTool, KnowledgeSearchTool, WebSearchTool, CalculatorTool};
 
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;

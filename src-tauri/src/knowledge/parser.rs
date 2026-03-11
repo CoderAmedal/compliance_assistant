@@ -51,14 +51,21 @@ impl DocumentParser {
             AppError::DocumentParse(format!("Unsupported file type: {}", extension))
         })?;
 
-        match doc_type {
+        let mut doc = match doc_type {
             DocumentType::Pdf => Self::parse_pdf(path),
             DocumentType::Word => Self::parse_word(path),
             DocumentType::Txt => Self::parse_txt(path),
             DocumentType::Markdown => Self::parse_markdown(path),
             DocumentType::Html => Self::parse_html(path),
             DocumentType::Excel => Self::parse_excel(path),
-        }
+        }?;
+
+        doc.content = Self::normalize_whitespace(&doc.content);
+        Ok(doc)
+    }
+
+    fn normalize_whitespace(content: &str) -> String {
+        content.chars().filter(|c| !c.is_whitespace()).collect()
     }
 
     fn parse_txt(path: &Path) -> AppResult<ParsedDocument> {

@@ -8,8 +8,8 @@ pub struct Chunker {
 impl Default for Chunker {
     fn default() -> Self {
         Self {
-            chunk_size: 500,
-            chunk_overlap: 50,
+            chunk_size: 100,
+            chunk_overlap: 20,
         }
     }
 }
@@ -23,66 +23,37 @@ impl Chunker {
     }
 
     pub fn chunk(&self, document_id: &str, content: &str) -> Vec<DocumentChunk> {
-        let paragraphs = self.split_into_paragraphs(content);
-        let chunks = self.merge_paragraphs(paragraphs);
-
-        chunks
-            .into_iter()
-            .enumerate()
-            .map(|(index, chunk_content)| {
-                DocumentChunk::new(document_id.to_string(), index, chunk_content)
-            })
-            .collect()
-    }
-
-    fn split_into_paragraphs(&self, content: &str) -> Vec<String> {
-        content
-            .split('\n')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .collect()
-    }
-
-    fn merge_paragraphs(&self, paragraphs: Vec<String>) -> Vec<String> {
         let mut chunks = Vec::new();
-        let mut current_chunk = String::new();
-        let mut current_size = 0;
+        let chars: Vec<char> = content.chars().collect();
+        let total_len = chars.len();
 
-        for paragraph in paragraphs {
-            let paragraph_size = paragraph.chars().count();
-
-            if current_size + paragraph_size > self.chunk_size && !current_chunk.is_empty() {
-                chunks.push(current_chunk.trim().to_string());
-
-                let overlap_text = self.get_overlap_text(&current_chunk);
-                current_chunk = overlap_text;
-                current_size = current_chunk.chars().count();
-            }
-
-            if !current_chunk.is_empty() {
-                current_chunk.push('\n');
-                current_size += 1;
-            }
-            current_chunk.push_str(&paragraph);
-            current_size += paragraph_size;
+        if total_len == 0 {
+            return chunks;
         }
 
-        if !current_chunk.trim().is_empty() {
-            chunks.push(current_chunk.trim().to_string());
+        let mut start = 0;
+        let mut index = 0;
+
+        while start < total_len {
+            let end = (start + self.chunk_size).min(total_len);
+            let chunk_content: String = chars[start..end].iter().collect();
+
+            chunks.push(DocumentChunk::new(
+                document_id.to_string(),
+                index,
+                chunk_content,
+            ));
+
+            index += 1;
+
+            if end >= total_len {
+                break;
+            }
+
+            start = end.saturating_sub(self.chunk_overlap);
         }
 
         chunks
-    }
-
-    fn get_overlap_text(&self, text: &str) -> String {
-        if self.chunk_overlap == 0 {
-            return String::new();
-        }
-
-        let chars: Vec<char> = text.chars().collect();
-        let start = chars.len().saturating_sub(self.chunk_overlap);
-        chars[start..].iter().collect()
     }
 }
 
@@ -106,6 +77,7 @@ mod tests {
         let chunks = chunk_document("test", content);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].content, content);
+        assert!(chunks[0].content.chars().count() <= 100);
     }
 
     #[test]
@@ -113,5 +85,18 @@ mod tests {
         let content = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
         let chunks = chunk_document("test", content);
         assert!(!chunks.is_empty());
+        for chunk in &chunks {
+            assert!(chunk.content.chars().count() <= 100);
+        }
+    }
+
+    #[test]
+    fn test_chunk_long_content() {
+        let content: String = "a".repeat(1000);
+        let chunks = chunk_document("test", &content);
+        for chunk in &chunks {
+            assert!(chunk.content.chars().count() <= 100);
+        }
+        assert!(chunks.len() >= 5);
     }
 }

@@ -6,15 +6,20 @@ use compliance_assistant::{
     ChatMessage,
     MessageRole,
     Document,
-    DocumentChunk,
-    DocumentStatus,
     ModelProvider,
     LlmClient,
     EmbeddingService,
+    ToolRegistry,
+    ToolExecutor,
+    PermissionManager,
+    tools::{FileReadTool, KnowledgeSearchTool, CalculatorTool},
+    AppResult,
+    AppError,
 };
 
 use tauri::State;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChatModelConfigResponse {
@@ -158,11 +163,10 @@ pub async fn send_message(
     
     let mut llm_messages: Vec<compliance_assistant::llm::ChatMessage> = vec![];
     
-    // 检索知识库相关内容
     let config = state.config.read().await;
     let embedding_service = EmbeddingService::new(config.embedding_model.clone());
     let retriever = compliance_assistant::knowledge::Retriever::new(state.db_pool.clone())
-        .with_embedding(embedding_service);
+        .with_embedding(embedding_service.clone());
     
     let knowledge_chunks = match retriever.search(&content, 5).await {
         Ok(chunks) => {
@@ -174,6 +178,8 @@ pub async fn send_message(
             vec![]
         }
     };
+    
+    let mut tool_results_metadata: Vec<serde_json::Value> = vec![];
     
     if !knowledge_chunks.is_empty() {
         let knowledge_context: String = knowledge_chunks
@@ -191,7 +197,9 @@ pub async fn send_message(
         
         llm_messages.push(compliance_assistant::llm::ChatMessage::system(system_prompt));
     } else {
-        eprintln!("[DEBUG] No knowledge chunks found");
+        llm_messages.push(compliance_assistant::llm::ChatMessage::system(
+            "你是一个智能助手，可以帮助用户回答问题。如果需要查询知识库，请使用 search_knowledge 工具。".to_string()
+        ));
     }
     
     let messages = session_manager
@@ -210,6 +218,21 @@ pub async fn send_message(
     
     llm_messages.extend(chat_messages);
     
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FileReadTool));
+    registry.register(Arc::new(KnowledgeSearchTool::new(state.db_pool.clone(), embedding_service)));
+    registry.register(Arc::new(CalculatorTool));
+    
+    let permission_manager = PermissionManager::new(state.db_pool.clone());
+    let executor = ToolExecutor::new(registry, permission_manager);
+    
+    let tools: Vec<compliance_assistant::llm::ToolDefinition> = executor
+        .registry()
+        .list()
+        .into_iter()
+        .map(|t| compliance_assistant::llm::ToolDefinition::from_tool(&t))
+        .collect();
+    
     let response = match &config.chat_model.provider {
         ModelProvider::Ollama => {
             let client = compliance_assistant::OllamaClient::new(
@@ -218,7 +241,8 @@ pub async fn send_message(
                 config.chat_model.ollama.temperature,
                 config.chat_model.ollama.top_p,
             );
-            client.chat(llm_messages).await.map_err(|e| e.to_string())?
+            execute_with_tools(&client, llm_messages, tools, &executor, &mut tool_results_metadata).await
+                .map_err(|e| e.to_string())?
         }
         ModelProvider::OpenAI => {
             let client = compliance_assistant::OpenAIClient::new(
@@ -228,15 +252,23 @@ pub async fn send_message(
                 config.chat_model.openai.temperature,
                 config.chat_model.openai.top_p,
             );
-            client.chat(llm_messages).await.map_err(|e| e.to_string())?
+            execute_with_tools(&client, llm_messages, tools, &executor, &mut tool_results_metadata).await
+                .map_err(|e| e.to_string())?
         }
     };
     drop(config);
     
-    let assistant_message = ChatMessage::new(
+    let metadata = if !tool_results_metadata.is_empty() {
+        Some(serde_json::json!({ "tool_calls": tool_results_metadata }))
+    } else {
+        None
+    };
+    
+    let assistant_message = ChatMessage::new_with_metadata(
         session_id.clone(),
         MessageRole::Assistant,
         response,
+        metadata,
     );
     
     session_manager
@@ -252,6 +284,82 @@ pub async fn send_message(
         timestamp: assistant_message.timestamp,
         metadata: assistant_message.metadata,
     })
+}
+
+async fn execute_with_tools<C: LlmClient>(
+    client: &C,
+    mut messages: Vec<compliance_assistant::llm::ChatMessage>,
+    tools: Vec<compliance_assistant::llm::ToolDefinition>,
+    executor: &ToolExecutor,
+    tool_results_metadata: &mut Vec<serde_json::Value>,
+) -> AppResult<String> {
+    let max_iterations = 10;
+    let mut iteration = 0;
+    
+    loop {
+        iteration += 1;
+        if iteration > max_iterations {
+            return Err(AppError::LlmRequest("Too many tool call iterations".to_string()));
+        }
+        
+        let response = client.chat_with_tools(messages.clone(), tools.clone()).await?;
+        
+        if !response.has_tool_calls() {
+            return Ok(response.content);
+        }
+        
+        let tool_calls = response.tool_calls.unwrap();
+        eprintln!("[DEBUG] LLM requested {} tool calls", tool_calls.len());
+        
+        let mut tool_results = Vec::new();
+        
+        for tool_call in &tool_calls {
+            let tool_name = &tool_call.function.name;
+            let args_str = &tool_call.function.arguments;
+            
+            eprintln!("[DEBUG] Executing tool: {} with args: {}", tool_name, args_str);
+            
+            let params: serde_json::Value = serde_json::from_str(args_str)
+                .unwrap_or_else(|_| serde_json::json!({}));
+            
+            let result = executor.execute(tool_name, params).await;
+            
+            let result_json = match result {
+                Ok(r) => {
+                    eprintln!("[DEBUG] Tool {} result: {:?}", tool_name, r);
+                    tool_results_metadata.push(serde_json::json!({
+                        "tool": tool_name,
+                        "arguments": args_str,
+                        "result": r
+                    }));
+                    serde_json::to_string(&r).unwrap_or_else(|_| "{}".to_string())
+                }
+                Err(e) => {
+                    eprintln!("[ERROR] Tool {} failed: {}", tool_name, e);
+                    tool_results_metadata.push(serde_json::json!({
+                        "tool": tool_name,
+                        "arguments": args_str,
+                        "error": e.to_string()
+                    }));
+                    format!("{{\"error\": \"{}\"}}", e)
+                }
+            };
+            
+            tool_results.push(compliance_assistant::llm::ChatMessage::tool_result(
+                tool_call.id.clone(),
+                result_json,
+            ));
+        }
+        
+        messages.push(compliance_assistant::llm::ChatMessage::assistant_with_tools(
+            response.content.clone(),
+            tool_calls,
+        ));
+        
+        for result in tool_results {
+            messages.push(result);
+        }
+    }
 }
 
 #[tauri::command]
@@ -412,30 +520,31 @@ pub async fn search_knowledge(
 
 #[tauri::command]
 pub async fn list_tools(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    Ok(vec![
-        serde_json::json!({
-            "name": "file_read",
-            "description": "Read file content",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"}
-                }
-            }
-        }),
-        serde_json::json!({
-            "name": "search_knowledge",
-            "description": "Search knowledge base",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"}
-                }
-            }
-        }),
-    ])
+    let config = state.config.read().await;
+    let embedding_service = EmbeddingService::new(config.embedding_model.clone());
+    drop(config);
+    
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FileReadTool));
+    registry.register(Arc::new(KnowledgeSearchTool::new(state.db_pool.clone(), embedding_service)));
+    registry.register(Arc::new(CalculatorTool));
+    
+    let tools: Vec<serde_json::Value> = registry
+        .list()
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters,
+                "requireConfirmation": t.require_confirmation
+            })
+        })
+        .collect();
+    
+    Ok(tools)
 }
 
 #[tauri::command]
@@ -444,9 +553,17 @@ pub async fn execute_tool(
     params: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<compliance_assistant::tools::ToolResult, String> {
-    let permission_manager = compliance_assistant::tools::PermissionManager::new(state.db_pool.clone());
-    let registry = compliance_assistant::tools::ToolRegistry::new();
-    let executor = compliance_assistant::tools::ToolExecutor::new(registry, permission_manager);
+    let config = state.config.read().await;
+    let embedding_service = EmbeddingService::new(config.embedding_model.clone());
+    drop(config);
+    
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FileReadTool));
+    registry.register(Arc::new(KnowledgeSearchTool::new(state.db_pool.clone(), embedding_service)));
+    registry.register(Arc::new(CalculatorTool));
+    
+    let permission_manager = PermissionManager::new(state.db_pool.clone());
+    let executor = ToolExecutor::new(registry, permission_manager);
     
     executor
         .execute(&tool_name, params)

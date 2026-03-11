@@ -49,6 +49,22 @@ impl ChatMessage {
             metadata: None,
         }
     }
+    
+    pub fn new_with_metadata(
+        session_id: String,
+        role: MessageRole,
+        content: String,
+        metadata: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            session_id,
+            role,
+            content,
+            timestamp: Utc::now().timestamp(),
+            metadata,
+        }
+    }
 }
 
 #[cfg(test)]

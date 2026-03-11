@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Compliance Assistant",
+  "productName": "隐私评估智能咨询助手",
   "version": "0.1.0",
   "identifier": "com.compliance-assistant.app",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Compliance Assistant",
+        "title": "隐私评估智能咨询助手",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

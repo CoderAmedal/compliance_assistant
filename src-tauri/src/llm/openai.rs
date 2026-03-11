@@ -1,4 +1,4 @@
-use super::{ChatMessage, ChatRequest, ChatResponse, LlmClient, LlmStream};
+use super::{ChatMessage, ChatRequest, ChatResponse, LlmClient, LlmStream, ToolDefinition, ToolCall};
 use crate::{AppError, AppResult};
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
@@ -46,6 +46,11 @@ impl OpenAIClient {
 #[async_trait]
 impl LlmClient for OpenAIClient {
     async fn chat(&self, messages: Vec<ChatMessage>) -> AppResult<String> {
+        let response = self.chat_with_tools(messages, vec![]).await?;
+        Ok(response.content)
+    }
+    
+    async fn chat_with_tools(&self, messages: Vec<ChatMessage>, tools: Vec<ToolDefinition>) -> AppResult<ChatResponse> {
         let url = format!("{}/chat/completions", self.base_url);
         
         let request = ChatRequest {
@@ -54,6 +59,7 @@ impl LlmClient for OpenAIClient {
             temperature: Some(self.temperature),
             top_p: Some(self.top_p),
             stream: Some(false),
+            tools: if tools.is_empty() { None } else { Some(tools) },
         };
         
         let mut builder = self.client.post(&url).json(&request);
@@ -77,7 +83,26 @@ impl LlmClient for OpenAIClient {
             .await
             .map_err(|e| AppError::LlmRequest(e.to_string()))?;
         
-        Ok(openai_response.choices[0].message.content.clone())
+        let choice = &openai_response.choices[0];
+        let content = choice.message.content.clone().unwrap_or_default();
+        
+        let tool_calls = choice.message.tool_calls.as_ref().map(|tcs| {
+            tcs.iter().map(|tc| ToolCall {
+                id: tc.id.clone(),
+                call_type: tc.type_field.clone(),
+                function: super::ToolCallFunction {
+                    name: tc.function.name.clone(),
+                    arguments: tc.function.arguments.clone(),
+                },
+            }).collect()
+        });
+        
+        Ok(ChatResponse {
+            content,
+            model: openai_response.model,
+            total_tokens: openai_response.usage.map(|u| u.total_tokens),
+            tool_calls,
+        })
     }
     
     async fn chat_stream(&self, messages: Vec<ChatMessage>) -> AppResult<LlmStream> {
@@ -89,6 +114,7 @@ impl LlmClient for OpenAIClient {
             temperature: Some(self.temperature),
             top_p: Some(self.top_p),
             stream: Some(true),
+            tools: None,
         };
         
         let mut builder = self.client.post(&url).json(&request);
@@ -141,6 +167,13 @@ impl LlmClient for OpenAIClient {
 #[derive(Debug, Deserialize)]
 struct OpenAIChatResponse {
     choices: Vec<OpenAIChoice>,
+    model: String,
+    usage: Option<OpenAIUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIUsage {
+    total_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,7 +183,22 @@ struct OpenAIChoice {
 
 #[derive(Debug, Deserialize)]
 struct OpenAIMessage {
-    content: String,
+    content: Option<String>,
+    tool_calls: Option<Vec<OpenAIToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    type_field: String,
+    function: OpenAIToolCallFunction,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIToolCallFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, Deserialize)]

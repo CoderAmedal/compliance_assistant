@@ -2,6 +2,7 @@ use crate::{AppError, AppResult, config::{EmbeddingModelConfig, ModelProvider}};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone)]
 pub struct EmbeddingService {
     config: EmbeddingModelConfig,
     client: Client,

@@ -21,8 +21,8 @@ impl PermissionManager {
         
         match result {
             Ok(Some(row)) => row.get::<i64, _>("enabled") == 1,
-            Ok(None) => false,
-            Err(_) => false,
+            Ok(None) => true,
+            Err(_) => true,
         }
     }
     
