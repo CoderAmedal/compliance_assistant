@@ -53,7 +53,9 @@
                   {{ message.role === 'user' ? '用户' : '智能隐私合规专家' }}
                   <span class="message-time">{{ formatTime(message.timestamp) }}</span>
                 </div>
-                <div class="message-text" v-html="formatContent(message.content)"></div>
+                <div class="message-text">
+                  <MarkdownRenderer :content="message.content" />
+                </div>
                 <div v-if="message.metadata?.tool_calls" class="tool-calls">
                   <div class="tool-calls-header">
                     <tool-outlined /> 工具调用
@@ -107,6 +109,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useChatStore } from '@/stores/useChatStore'
 import { PlusOutlined, MessageOutlined, DeleteOutlined, ToolOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
 const chatStore = useChatStore()
 const inputMessage = ref('')
@@ -156,13 +159,6 @@ function startResize(e: MouseEvent) {
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp * 1000)
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
-function formatContent(content: string): string {
-  return content
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>')
 }
 
 async function handleNewSession() {

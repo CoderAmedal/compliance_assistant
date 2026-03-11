@@ -20,7 +20,9 @@
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "ant-design-vue": "^4.0.0",
+    "highlight.js": "^11.11.1",
     "markdown-it": "^14.0.0",
+    "mermaid": "^11.13.0",
     "pinia": "^2.1.0",
     "vue": "^3.4.0",
     "vue-router": "^4.6.4"
